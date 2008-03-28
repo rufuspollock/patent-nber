@@ -31,13 +31,13 @@ def draw_graph(graph):
 
 def analyse(graph):
     print 'Order (Size): ', graph.order()
-    num_connected = nx.number_connected_components(graph)
+    num_connected = nx.number_connected_components(graph.to_undirected())
     print 'Number connected components: ', num_connected
     print 'Density: ', nx.density(graph)
 
 
 if __name__ == '__main__':
     gr = make_graph()
-    # draw_graph(gr)
+    draw_graph(gr)
     analyse(gr)
 

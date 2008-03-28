@@ -1,8 +1,6 @@
-Work to analyze structure of innovation and creativity using citation databases
-for patents and publications.
+Analyzing the NBER patent database (Hall, Jaffe and Trajtenberg):
 
-Current works focusing on using the NBER patent database (Hall, Jaffe and
-Trajtenberg).
+  <http://www.ckan.net/package/read/patent-nber>
 
 ## Files
 
