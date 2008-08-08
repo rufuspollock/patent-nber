@@ -1,19 +1,11 @@
-## Utilities
-
-def unzip_data(instr):
-    xvals = []
-    yvals = []
-    for line in instr.split():
-        xx, yy = line.split(',')
-        xvals.append(int(xx))
-        yvals.append(int(yy))
-    return xvals, yvals
+import numpy
 
 ## Calculate some distributions
 
 def get_cite_dist():
     cites_distbn = {}
     cited_distbn = {}
+    merged_distbn = {}
     ff = file('apat63_99.txt')
     count = 0
     line_start_1975 = 784610
@@ -23,12 +15,14 @@ def get_cite_dist():
             # year = int(items[1])
             cites = int(items[12])
             cited = int(items[13])
+            merged = cites + cited
             cites_distbn[cites] = cites_distbn.get(cites, 0) + 1
             cited_distbn[cited] = cited_distbn.get(cited, 0) + 1
+            merged_distbn[merged] = merged_distbn.get(merged, 0) + 1
         count += 1
         # if count >= line_start_1975 + 10:
         #     break
-    return cites_distbn, cited_distbn
+    return cites_distbn, cited_distbn, merged
 
 def save_data(indict, filepath=None):
     keys = indict.keys()
@@ -44,37 +38,43 @@ def save_data(indict, filepath=None):
 
 def run_cite_dist():
     cites, cited = get_cite_dist()
-    save_data(cites, 'dist_cites.txt')
-    save_data(cited, 'dist_cited.txt')
+    save_data(cites, './out/dist_cites.txt')
+    save_data(cited, './out/dist_cited.txt')
 
+def merge_count_data(cd1, cd2):
+    # merge two sets of count data provided as numpy matrices/arrays
+    d1 = dict(cd1.tolist())
+    d2 = dict(cd2.tolist())
+    keys = set(d1.keys() + d2.keys())
+    keys = sorted(list(keys))
+    out = []
+    for k in keys:
+        v = d1.get(k, 0) + d2.get(k, 0)
+        out.append([k, v])
+    return out
+
+import pylab
 def plot_dist():
-    import pylab
-    import math
-    cites_data = file('dist_cited.txt').read()
-    xvals, yvals = unzip_data(cites_data) 
-    yvals = [ math.log(float(yy)) for yy in yvals ]
-    pylab.plot(xvals, yvals, 'bx')
-    pylab.show()
+    def _plot(data):
+        xvals = data.T[0]
+        yvals = data.T[1]
+        pylab.subplot(211)
+        pylab.loglog(xvals, yvals, 'bx')
+        pylab.subplot(212)
+        pylab.semilogy(xvals, yvals, 'bx')
+    cites_data = numpy.loadtxt('./out/dist_cites.txt', dtype=int,
+            delimiter=',')
+    cited_data = numpy.loadtxt('./out/dist_cited.txt', dtype=int,
+            delimiter=',')
 
-
-class TestStuff:
-
-    def test_save_data(self):
-        indict = { 1 : 2, 0 : 20 }
-        out = save_data(indict)
-        print out
-        assert '0,20\n1,2\n' in out
-
-    def test_unzip_data(self):
-        instr = \
-'''0,50519
-1,123521'''
-        xx, yy = unzip_data(instr)
-        print xx, yy 
-        assert xx == [ 0, 1 ]
-        assert yy == [ 50519, 123521 ]
-
+    _plot(cites_data)
+    pylab.savefig('./out/dist_cites.png')
+    pylab.clf()
+    _plot(cited_data)
+    pylab.savefig('./out/dist_cited.png')
+    pylab.clf()
 
 if __name__ == '__main__':
-    # run()
+    import pylab
+    cites_data = file('./out/dist_cited.txt').read()
     plot_dist()
