@@ -1,6 +1,7 @@
 from analyse import *
+import numpy
 
-class TestStuff(unittest.TestCase):
+class TestStuff(object):
 
     def _gen_test_array(self):
        tarr1 = RandomArray.random((20, 30))
@@ -32,14 +33,20 @@ class TestStuff(unittest.TestCase):
  
     def test_make_closure(self):
         out = make_closure(self.in_array)
-        self.failUnless(out[0,1] == 1)
-        self.failUnless(out[0,9] == 1)
+        assert out[0,1] == 1
+        assert out[0,9] == 1
     
     def test_reduce_dimensions(self):
         # tmp = self.in_array[:,0:self.in_array.shape[0]]
         tmp = self.in_array
         out = reduce_dimensions(tmp)
-        self.failUnless(out['sdev'][0] > 0)
+        assert out.ndim == tmp.ndim
+        assert out.shape == tmp.shape
+
+    def test_reduce_dimensions_rpy(self):
+        tmp = self.in_array
+        out = reduce_dimensions_rpy(tmp)
+        assert out['sdev'][0] > 0
         # rpy.r.plot(out['sdev'])
         # rpy.r.lines(rpy.r.c(0,.05),rpy.r.c(1,.05))
         # while 'X11' in rpy.as_list(rpy.r('.Devices')):
@@ -49,10 +56,6 @@ class TestStuff(unittest.TestCase):
     def test_all_in_one(self):
         import tempfile
         out = make_closure(self.in_array)
-        out = reduce_dimensions(out)
+        out = reduce_dimensions_rpy(out)
         dump_array(out['x'], '/tmp/patent_results.txt')
-
-if __name__ == '__main__':
-    unittest.main()
-    # print _gen_test_array()
 

@@ -3,8 +3,8 @@
 Assumes the basic citation matrix has already been produced.
 '''
 # from numpy import random, array
-from Numeric import array
-import unittest
+from numpy import array
+import mdp
 
 def make_closure(M):
     nn = M.shape[0]
@@ -15,13 +15,15 @@ def make_closure(M):
     return M
 
 import rpy
-def reduce_dimensions(arr):
-    # has the same rows as the original input but few cols
-    # return mdp.pca(array) # does not work with some weird error about
-    # singular covariance matrix
-    return rpy.r.prcomp(arr)
+def reduce_dimensions(myarray):
+    # with std test input get
+    # Covariance matrix may be singular.Try instantiating the node with svd=True.
+    return mdp.pca(myarray, svd=True)
 
-def plot_distbn(array):
+def reduce_dimensions_rpy(myarray):
+    return rpy.r.prcomp(myarray)
+
+def plot_distbn(myarray):
     do_plot()
 
 def dump_array(arr, filepath):
