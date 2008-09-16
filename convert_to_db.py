@@ -4,6 +4,12 @@ Setup:
 1. Create db as specified by dburi:
     $ sudo -u postgres createdb --owner rgrp patent
 
+Useful files are found on: <http://www.nber.org/patents/>
+
+In particular:
+
+    * Subcat labels: <http://www.nber.org/patents/subcategories.txt>
+
 NOTES:
 
   * The citation data contains duplicate entries (~3600 of them)
@@ -31,7 +37,7 @@ patent = Table('patent', metadata,
     Column('assignee', Integer),
     Column('asscode', Integer),
     Column('claims', Integer),
-    Column('nlass', Integer),
+    Column('nclass', Integer),
     Column('cat', Integer),
     Column('subcat', Integer),
     Column('cmade', Integer),
@@ -52,26 +58,44 @@ citation = Table('citation', metadata,
     Column('cited', Integer, primary_key=True),
 )
 
+i = Index('citation_cited_idx', citation.c.cited)
+
 # existence of duplicates means we need table without primary key stuff
 citation_tmp = Table('citation_tmp', metadata,
     Column('citing', Integer),
     Column('cited', Integer)
 )
 
-# class Patent(object):
-#     pass
-# 
-# class Citation(object):
-#     pass
-# 
-# orm.mapper(Patent, patent)
-# orm.mapper(Citation, citation)
-# 
-# Session = orm.scoped_session(orm.sessionmaker(
-#     autoflush=True,
-#     transactional=False,
-#     bind=engine
-# ))
+class Patent(object):
+    def __str__(self):
+        table = orm.class_mapper(self.__class__).mapped_table
+        info = '<%s ' % self.__class__.__name__
+        for c in table.c:
+            info += '%s=%s ' % (c.key, getattr(self, c.key)) 
+        info += '>'
+        return info
+
+ 
+class Citation(object):
+    pass
+
+Session = orm.scoped_session(orm.sessionmaker(
+    autoflush=True,
+    transactional=False,
+    bind=engine
+))
+ 
+mapper = Session.mapper
+mapper(Patent, patent, properties={
+    'citations':orm.relation(Citation),
+    'citations_by':orm.relation(Citation,
+        primaryjoin=(patent.c.id==citation.c.cited),
+        foreign_keys=[citation.c.cited]
+
+        )
+})
+mapper(Citation, citation)
+
 
 
 class PatentLoader(object):
@@ -210,6 +234,10 @@ class TestCreateDb:
         self.loader.initdb()
         file(self.filepath, 'w').write(self.pdata)
         file(self.filepath2, 'w').write(self.cdata)
+
+    def tearDown(self):
+        os.remove(self.filepath)
+        os.remove(self.filepath2)
     
     def test_created_ok(self):
         # create a patent and then delete it

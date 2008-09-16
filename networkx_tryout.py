@@ -32,9 +32,14 @@ def make_graph(how_many=None):
 
 def draw_graph(graph):
     import pylab
-    nx.draw(graph, font_size=11)
+    nodesize = 20
+    kwargs = { 'with_labels': False, 'node_size': nodesize }
+    pylab.figure(figsize=(8,8))
+    pos = nx.graphviz_layout(graph,prog="twopi",root=0)
+    # pos = nx.graphviz_layout(graph, prog="neato")
+    nx.draw(graph, **kwargs)
     # pylab.show()
-    fp = './out/first-50-subcat-13.png'
+    fp = './out/subcat13_graph.png'
     pylab.savefig(fp)
 
 def analyse(graph):
@@ -58,14 +63,17 @@ def plot_degree_distbn(graph):
     pylab.subplot(212)
     pylab.semilogy(lower_edges, hist)
 
-def plot_cat13_ddistbn():
+def main():
     gr = make_graph()
     plot_degree_distbn(gr)
-    pylab.savefig('./out/cat13_ddistbn.png')
+    pylab.savefig('./out/subcat13_ddistbn.png')
+
+    pylab.clf()
+    # draw_graph(gr)
 
 if __name__ == '__main__':
-    gr = make_graph(10000)
-    # draw_graph(gr)
+    gr = make_graph(1000)
+    draw_graph(gr)
     # analyse(gr)
-    plot_cat13_ddistbn()
+    # plot_cat13_ddistbn()
 
