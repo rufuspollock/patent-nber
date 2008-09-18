@@ -6,6 +6,25 @@
         * or just: what is distribution of lag times for citations
         * take all patents in 1975 and run citation data through ...
     3. Do a PCA analysis using some data
+
+Links/Flows = Citations. However have extra attributes derived from patents
+    * year it occurred + difference in age
+    * Direction 
+
+Patents = Technologies:
+    * location of patents in technology space, patent = some vector of characteristics e.g.
+        * adjacency matrix vector
+        * class, subcat, etc
+    * value of patents
+        * no. citations, no. claims etc
+
+Ideas:
+
+    * knowledge flows: cite from x -> y is flow from y -> x. Equate x and y
+      with their technological areas and ...
+      * multi-graph with weighted links
+    * 
+
 '''
 import os
 import simplejson as sj
@@ -49,6 +68,33 @@ class Analyzer(object):
         data.sort()
         sj.dump(data, file(self.nclass_list, 'w'), indent=4)
 
+    def all_cite_counts(self):
+        cached = 'data/cite_counts_by_year.js'
+        if not os.path.exists(cached):
+            res = []
+            for year in range(1975, 1995):
+                res.append([year, self.cite_counts(year)])
+            sj.dump(res, file(cached, 'w'))
+        else:
+            res = sj.load(file(cached))
+        return res
+
+    def cite_counts(self, year):
+        # if not self.cite_counts
+        t = db.patent.c
+        results = {}
+        def ddist(col):
+            q = sql.select([col, sql.func.count('*')]) # ([col, sql.func.count('*'), t.gyear])
+            q = q.where(t.gyear==year)
+            q = q.group_by(col)
+            q = q.order_by(col)
+            cursor = q.execute()
+            out = [ [x[0], x[1] ] for x in cursor ]
+            return out
+        results['cmade'] = ddist(t.cmade)
+        results['creceive'] = ddist(t.creceive)
+        return results
+
     def get_citation_matrix(self, patent_query):
         # patent_set = sql.select(d
         # sql.
@@ -68,8 +114,21 @@ class Analyzer(object):
         # q = sql.select(
         pass
 
-    def get_flows_by_subcat(self, time):
-        pass
+    def get_flows_by_subcat(self, start, end):
+        '''
+        Return an NxN matrix with N(i,j) = flow from area i to area j
+
+        Add one unknown class to deal with cases where we don't know dest
+        patent
+
+        '''
+        patents = db.Patent.filter_by(start <= db.Patent.gyear <= end)
+        self.get_flows(self, patents)
+
+    def get_flows(self, patents):
+        for p in patents:
+            for cite in p.citations:
+                dest = cite.cited
 
 
 
@@ -99,6 +158,12 @@ class TestStuff:
         assert out[0][0] == 1
         assert out[0][1] == 96
 
+    def test_all_cite_counts(self):
+        out = self.a.all_cite_counts()
+        assert len(out) == 20, len(out)
+        assert 'cmade' in out[0][1]
+        y1975 = out[0][1]['cmade']
+        assert y1975[0][0] == 0
 
 import pylab
 def main():
@@ -114,6 +179,24 @@ def main():
     doplot(a.subcats, 'subcat_stats')
     doplot(a.nclasss, 'nclass_stats')
 
+def plot_ddist(year):
+    a = Analyzer()
+    c = a.all_cite_counts()
+    c = dict(c)
+    counts = c[year]['creceive']
+    counts = zip(*counts)
+    pylab.title('Distbn of Citations Received (%s)' % year)
+    pylab.xlabel('No. Citations Received')
+    pylab.ylabel('No. of Patents')
+    pylab.bar(counts[0], counts[1], log=True)
+    fn = os.path.join(outdir, 'creceive_ddist_%s.png' % year)
+    pylab.savefig(fn)
+    pylab.clf()
+
 if __name__ == '__main__':
-    main()
+    # main()
+    plot_ddist(1975)
+    plot_ddist(1985)
+    plot_ddist(1994)
+
 

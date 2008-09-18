@@ -72,7 +72,7 @@ def main():
     # draw_graph(gr)
 
 if __name__ == '__main__':
-    gr = make_graph(1000)
+    gr = make_graph(10000)
     draw_graph(gr)
     # analyse(gr)
     # plot_cat13_ddistbn()
