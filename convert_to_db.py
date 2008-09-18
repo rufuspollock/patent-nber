@@ -54,16 +54,16 @@ patent = Table('patent', metadata,
 )
 
 citation = Table('citation', metadata,
-    Column('citing', Integer, ForeignKey('patent.id'), primary_key=True),
-    Column('cited', Integer, primary_key=True),
+    Column('citing_id', Integer, ForeignKey('patent.id'), primary_key=True),
+    Column('cited_id', Integer, primary_key=True),
 )
 
-i = Index('citation_cited_idx', citation.c.cited)
+i = Index('citation_cited_idx', citation.c.cited_id)
 
 # existence of duplicates means we need table without primary key stuff
 citation_tmp = Table('citation_tmp', metadata,
-    Column('citing', Integer),
-    Column('cited', Integer)
+    Column('citing_id', Integer),
+    Column('cited_id', Integer)
 )
 
 class Patent(object):
@@ -87,15 +87,20 @@ Session = orm.scoped_session(orm.sessionmaker(
  
 mapper = Session.mapper
 mapper(Patent, patent, properties={
-    'citations':orm.relation(Citation),
+    'citations':orm.relation(Citation, backref='citing'),
     'citations_by':orm.relation(Citation,
-        primaryjoin=(patent.c.id==citation.c.cited),
-        foreign_keys=[citation.c.cited]
-
-        )
+        primaryjoin=(patent.c.id==citation.c.cited_id),
+        foreign_keys=[citation.c.cited_id]
+        ),
+#     'citing':orm.relation(Patent,
+#         secondary=citation,
+#         primaryjoin=(patent.c.id==citation.c.citing_id),
+#         _local_remote_pairs=[(patent.c.id, citation.c.citing_id)],
+#         secondaryjoin=(citation.c.cited_id==patent.c.id),
+#         foreign_keys=[citation.c.cited_id]
+#         )
 })
 mapper(Citation, citation)
-
 
 
 class PatentLoader(object):
@@ -136,7 +141,7 @@ class PatentLoader(object):
         copycmd = pgcmdbase % 'insert into citation select distinct * from citation_tmp;'
 
         cmds = [
-            # pgcmdbase % 'create table citation_tmp( citing integer, cited integer );',
+            # pgcmdbase % 'create table citation_tmp( citing_id integer, cited_id integer );',
             # loadcmd,
             # copycmd,
             # pgcmdbase % 'drop table citation_tmp;',
@@ -150,13 +155,13 @@ class PatentLoader(object):
     def find_duplicates(self):
         # whole bunch of duplicates in citation table! 
         # 3474!
-        # select citing, cited, count(*) from citation_tmp group by citing, cited having count(*) > 1;
+        # select citing_id, cited_id, count(*) from citation_tmp group by citing, cited_id having count(*) > 1;
         myt = citation_tmp
-        q = select([myt.c.citing, myt.c.cited, func.count('*')])
-        q = q.group_by(myt.c.citing)
-        q = q.group_by(myt.c.cited)
+        q = select([myt.c.citing_id, myt.c.cited_id, func.count('*')])
+        q = q.group_by(myt.c.citing_id)
+        q = q.group_by(myt.c.cited_id)
         q = q.having(func.count('*') > 1)
-        # q = q.having(func.count(myt.c.citing
+        # q = q.having(func.count(myt.c.citing_id
         print q
         out = q.execute().fetchall()
         print len(out)
@@ -170,9 +175,9 @@ class PatentLoader(object):
         '''
         # use this info to speed things up
         firstone = 4326083
-        q = select([citation_tmp.c.citing])
-        q = q.where(citation_tmp.c.citing > firstone -1)
-        rawexists = 'select 1 from patent where patent.id = citing'
+        q = select([citation_tmp.c.citing_id])
+        q = q.where(citation_tmp.c.citing_id > firstone -1)
+        rawexists = 'select 1 from patent where patent.id = citing_id'
         q = q.where(not_(
             func.exists(rawexists)
             ))
@@ -198,7 +203,7 @@ class PatentLoader(object):
         ids = [ int(line) for line in idsdata ]
         for id in ids:
             q = citation_tmp.delete()
-            q = q.where(citation_tmp.c.citing == id)
+            q = q.where(citation_tmp.c.citing_id == id)
             print 'Deleting: %s' % id
             q.execute()
 
@@ -265,15 +270,14 @@ class TestCreateDb:
         # TODO: test
 
 
+import data
 def main():
     loader = PatentLoader(engine)
     loader.initdb()
-    patfile = 'data/apat63_99.txt'
-    citefile = 'data/cite75_99.txt'
-    loader.load_patents(patfile)
-    loader.load_citations(citefile)
+    loader.load_patents(data.patfile)
+    loader.load_citations(data.citefile)
+
 
 if __name__ == '__main__':
     loader = PatentLoader(engine)
-    # a = PatentAnalyzer(engine)
 

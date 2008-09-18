@@ -7,11 +7,20 @@
         * take all patents in 1975 and run citation data through ...
     3. Do a PCA analysis using some data
 
-Links/Flows = Citations. However have extra attributes derived from patents
+1. Links/Flows = Citations
+
+Can use graph theoretic tools. Note extra attributes derived from patents such
+as:
+
     * year it occurred + difference in age
     * Direction 
 
-Patents = Technologies:
+One *big* problem here is censoring bias. We do not have full patent set or
+full citation set. Thus we lose patents as they go outside of the set. Not
+clear what effect this has.
+
+
+2. Patents = Technologies:
     * location of patents in technology space, patent = some vector of characteristics e.g.
         * adjacency matrix vector
         * class, subcat, etc
@@ -29,27 +38,35 @@ Ideas:
 import os
 import simplejson as sj
 import sqlalchemy.sql as sql
+import numpy as N
+import scipy.io
 
 import convert_to_db as db
-datadir = os.path.abspath('data')
-outdir = os.path.abspath('out')
+import data as D
+
+datadir = D.datadir
+outdir = D.outdir
 
 class Analyzer(object):
     subcat_list = os.path.join(datadir, 'subcat_summary.js')
     nclass_list = os.path.join(datadir, 'nclass_summary.js')
 
     def __init__(self):
-        self.s = db.Session()
         self.subcats = None
+        self.nclasss = None
+        self.load_cached_data()
+        # (wc data/subcategories.csv) - 1
+        # self.num_subcats = 36
+        # tail -n +10 data/list_of_classes.txt | wc
+        # self.num_classes = 426
+
+    def load_cached_data(self):
         if not os.path.exists(self.subcat_list):
-            self._get_subcat_stats() 
+            self._get_subcat_stats()
         self.subcats = sj.load(file(self.subcat_list))
         if not os.path.exists(self.nclass_list):
-            self._get_nclass_stats() 
+            self._get_nclass_stats()
         self.nclasss = sj.load(file(self.nclass_list))
-
-    def extract_citation_matrix(self, subcat, year):
-        pass
 
     def _get_subcat_stats(self):
         # hand-crafted sql is probably faster
@@ -101,7 +118,7 @@ class Analyzer(object):
         patent_set = patent_query.execute()
         for patent in patent_set:
             for cite in patent.citations:
-                results.append([patent.id, cite.cited, patent.gyear])
+                results.append([patent.id, cite.cited_id, patent.gyear])
             # in fact since both patent and pother must be in patent_set
             # can ignore this since we will already have it
             # (question is do we care about directionality ...
@@ -114,59 +131,129 @@ class Analyzer(object):
         # q = sql.select(
         pass
 
-    def get_flows_by_subcat(self, start, end):
+    def all_flows(self):
+        self.flows = {}
+        for year in range(1985, 1986):
+            self.flows[year] = self.get_flows_by_year(year)
+        return self.flows
+
+    def get_flows_by_year(self, year, limit=0):
+        '''Return an NxN matrix with N(i,j) = flow from area i to area j.
+
+        See L{get_flows} for more details.
+
+        NB: we use gyear not appyear to sort by year.
         '''
-        Return an NxN matrix with N(i,j) = flow from area i to area j
+        # for catname in [ 'nclass', '
+        fn1 = 'subcat_%s.dat' % year
+        fn2 = 'nclass_%s.dat' % year
+        fp1 = os.path.join(D.flowdatadir, fn1)
+        fp2 = os.path.join(D.flowdatadir, fn2)
+        if not os.path.exists(fp1):
+            print '## Extracting flow information for year: ', year
+            patents = db.Patent.query.filter_by(gyear=year)
+            if limit > 0:
+                patents = patents.limit(limit)
+            msubcat, mnclass = self.get_flows_slow(patents)
+            scipy.io.write_array(fp1, msubcat) 
+            scipy.io.write_array(fp2, mnclass)
+        else:
+            msubcat = scipy.io.read_array(fp1)
+            mnclass = scipy.io.read_array(fp2)
+        return (msubcat, mnclass)
 
-        Add one unknown class to deal with cases where we don't know dest
-        patent
+    def full_join(self):
+        full = db.patent.join(db.citation)
+        p1 = db.patent
+        p2 = db.patent.alias('p2')
+        c1 = db.citation
+        full = full.outerjoin(p2, p2.c.id==db.citation.c.cited_id)
+        print full
+        sel = sql.select(
+                [p1.c.id, p2.c.id, p1.c.cmade,
+                    p1.c.nclass, p2.c.nclass,
+                    p1.c.subcat, p2.c.subcat,
+                    ],
+                from_obj=full)
+        sel = sel.apply_labels()
+        return sel
 
+    def get_flows(self, query):
+        '''We include cited patents outside of our set of patents.
+
+        That is we are simply looking for all inflows into our set.
+
+        Where patent is unknown assign this to an extra last category
+
+        For efficiency do both nclass and subcat at once.
         '''
-        patents = db.Patent.filter_by(start <= db.Patent.gyear <= end)
-        self.get_flows(self, patents)
+        for row in query.execute():
+            src
+        class CategoryProcessor(object):
+            def __init__(self, catname, cat_summary):
+                self.catname = catname
+                self.size = len(cat_summary)
+                self.catlist = [ x[0] for x in cat_summary]
+                self.size = len(self.catlist)
+                # add 1 for case where patents unknown
+                self.matrix = N.zeros( (self.size+1, self.size+1) )
 
-    def get_flows(self, patents):
+            def process(self, srccat, destcat, flow):
+                i = self.index(srccat)
+                j = self.index(destcat)
+                # self.matrix[i,j] = self.matrix[i,j] + 
+
+            def index(self, cat):
+                # index into matrix
+                if cat is None:
+                    return self.size
+                else:
+                    return self.catlist.index(cat)
+            proc_subcat = CategoryProcessor('subcat', self.subcats)
+            proc_nclass = CategoryProcessor('nclass', self.nclasss)
+
+    def get_flows_slow(self, patents):
+        '''This is just too slow ...
+        '''
+        class CategoryProcessor(object):
+            def __init__(self, catname, cat_summary):
+                self.catname = catname
+                self.size = len(cat_summary)
+                self.catlist = [ x[0] for x in cat_summary]
+                self.size = len(self.catlist)
+                # add 1 for case where patents unknown
+                self.matrix = N.zeros( (self.size+1, self.size+1) )
+
+            def index(self, patent):
+                # index into matrix
+                if patent is None:
+                    return self.size
+                else:
+                    cat = getattr(patent, self.catname)
+                    return self.catlist.index(cat)
+
+        proc_subcat = CategoryProcessor('subcat', self.subcats)
+        proc_nclass = CategoryProcessor('nclass', self.nclasss)
+        total = patents.count()
+        print 'Total to process:', total
+        count = -1
         for p in patents:
+            count += 1
+            # print every 1% point
+            if count % max(1,(total/100)) == 0: print count
+            print count
             for cite in p.citations:
-                dest = cite.cited
-
-
-
-class TestStuff:
-    a = Analyzer()
-
-    def test_1(self):
-        year = 1975
-        pat = db.Patent.query.filter_by(gyear=year).first()
-        print pat
-        assert pat.gyear == 1975
-        assert pat.claims == 6
-        assert pat.nclass == 2
-        assert len(pat.citations) == 5, len(pat.citations)
-        assert len(pat.citations_by) == 0, len(pat.citations_by)
-
-    def test_subcat_stats(self):
-        out = self.a.subcats
-        print out
-        assert len(out) == 36, len(out)
-        assert out[0][0] == 11
-
-    def test_nclass_stats(self):
-        out = self.a.nclasss
-        print out
-        assert len(out) == 418, len(out)
-        assert out[0][0] == 1
-        assert out[0][1] == 96
-
-    def test_all_cite_counts(self):
-        out = self.a.all_cite_counts()
-        assert len(out) == 20, len(out)
-        assert 'cmade' in out[0][1]
-        y1975 = out[0][1]['cmade']
-        assert y1975[0][0] == 0
+                flow = 1.0/p.cmade
+                dest = db.Patent.query.get(cite.cited_id)
+                for proc in [ proc_subcat, proc_nclass ]:
+                    srcindex = proc.index(p)
+                    destindex = proc.index(dest)
+                    proc.matrix[srcindex, destindex] = proc.matrix[srcindex, destindex] + flow
+        return (proc_subcat.matrix, proc_nclass.matrix)
+    
 
 import pylab
-def main():
+def plot_category_stats():
     a = Analyzer()
     def doplot(stats, fname):
         stats = zip(*stats)
@@ -193,10 +280,15 @@ def plot_ddist(year):
     pylab.savefig(fn)
     pylab.clf()
 
-if __name__ == '__main__':
-    # main()
+def main():
     plot_ddist(1975)
     plot_ddist(1985)
     plot_ddist(1994)
+
+if __name__ == '__main__':
+    # main()
+    a = Analyzer()
+    # a.all_flows()
+    a.get_flows_fast()
 
 
