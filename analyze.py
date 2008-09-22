@@ -38,7 +38,7 @@ Ideas:
 import os
 import simplejson as sj
 import sqlalchemy.sql as sql
-import numpy as N
+import scipy as S
 import scipy.io
 
 import convert_to_db as db
@@ -82,6 +82,14 @@ class Analyzer(object):
                 from_obj=full)
         sel = sel.apply_labels()
         return sel
+
+    def _get_subcat_labels(self):
+        fn = os.path.join(datadir, 'subcategories.csv')
+        import csv
+        r = csv.reader(file(fn))
+        r.next() # skip heading
+        labels = [ [int(row[1]), row[2] ] for row in r ]
+        return dict(labels)
 
     def _get_subcat_stats(self):
         # hand-crafted sql is probably faster
@@ -208,7 +216,7 @@ class Analyzer(object):
                 self.catlist = [ x[0] for x in cat_summary]
                 self.size = len(self.catlist)
                 # add 1 for case where patents unknown
-                self.matrix = N.zeros( (self.size+1, self.size+1) )
+                self.matrix = S.zeros( (self.size+1, self.size+1) )
 
             def process(self, row):
                 # weight in flow by number of citatons this patent has
@@ -244,47 +252,124 @@ class Analyzer(object):
         return (proc_subcat.matrix, proc_nclass.matrix)
     
 
+
 import pylab
-def plot_category_stats():
-    a = Analyzer()
-    def doplot(stats, fname):
-        stats = zip(*stats)
-        pylab.bar(stats[0], stats[1])
-        # TODO: labels bars -- see data/subcategories.csv or data/list_of_classes.txt
-        print fname
-        fn = os.path.join(outdir, '%s.png' % fname)
+import networkx as nx
+class Plotter(object):
+
+    def __init__(self):
+        self.a = Analyzer()
+
+    def plot_category_stats(self):
+        def doplot(stats, fname):
+            stats = zip(*stats)
+            pylab.bar(stats[0], stats[1])
+            # TODO: labels bars -- see data/subcategories.csv or data/list_of_classes.txt
+            print fname
+            fn = os.path.join(outdir, '%s.png' % fname)
+            pylab.savefig(fn)
+            pylab.clf()
+        doplot(self.a.subcats, 'subcat_stats')
+        doplot(self.a.nclasss, 'nclass_stats')
+
+    def plot_ddist(self, year):
+        c = self.a.all_cite_counts()
+        c = dict(c)
+        counts = c[year]['creceive']
+        counts = zip(*counts)
+        pylab.title('Distbn of Citations Received (%s)' % year)
+        pylab.xlabel('No. Citations Received')
+        pylab.ylabel('No. of Patents')
+        pylab.bar(counts[0], counts[1], log=True)
+        fn = os.path.join(outdir, 'creceive_ddist_%s.png' % year)
         pylab.savefig(fn)
         pylab.clf()
-    doplot(a.subcats, 'subcat_stats')
-    doplot(a.nclasss, 'nclass_stats')
 
-def plot_ddist(year):
-    a = Analyzer()
-    c = a.all_cite_counts()
-    c = dict(c)
-    counts = c[year]['creceive']
-    counts = zip(*counts)
-    pylab.title('Distbn of Citations Received (%s)' % year)
-    pylab.xlabel('No. Citations Received')
-    pylab.ylabel('No. of Patents')
-    pylab.bar(counts[0], counts[1], log=True)
-    fn = os.path.join(outdir, 'creceive_ddist_%s.png' % year)
-    pylab.savefig(fn)
-    pylab.clf()
+    def plot_subcat_flow_bar(self, subcatid, year):
+        msubcat, mnclass = self.a.get_flows_by_year(year)
+        subcats = [ x[0] for x in self.a.subcats ]
+        idx = subcats.index(subcatid)
+        # for undefined area
+        subcats.append(subcats[-1] + 1)
+        # 2nd row
+        vals = msubcat[idx]
+        pylab.bar(subcats, vals)
+        fn = os.path.join(outdir, 'flows_subcat_%s_%s.png' % (year, subcatid))
+        pylab.savefig(fn)
 
-def plot_flows(year):
-    a = Analyzer()
-    msubcat, mnclass = a.get_flows_by_year(1985)
-    # subcat 13
-    idx = 2
-    subcats = [ x[0] for x in a.subcats ]
-    subcat = subcats[idx]
-    # for undefined area
-    subcats.append(subcats[-1] + 1)
-    vals = msubcat[2]
-    pylab.bar(subcats, vals)
-    fn = os.path.join(outdir, 'flows_subcat_%s_%s.png' % (subcat, year))
-    pylab.savefig(fn)
+    def plot_subcat_flows(self, year, pos=None):
+        msubcat, mnclass = self.a.get_flows_by_year(year)
+        # remove the unknown category
+        trimmed = msubcat[:-1,:-1]
+        # also remove the miscellaneous
+        trimmed = trimmed[:-1,:-1]
+        # transpose to get flows right way round (from x into y)
+        trimmed = trimmed.T
+        tlabels = self.a._get_subcat_labels()
+        labels = {}
+        for ii, item in enumerate(self.a.subcats):
+            labels[ii] = tlabels[item[0]]
+        del labels[len(labels) - 1]
+
+        pylab.clf()
+        pylab.figure(figsize=(15,15))
+        dgr, pos = self.draw_weighted_adjacency_matrix(trimmed, labels=labels, pos=pos)
+        pylab.xticks([])
+        pylab.yticks([])
+        fn = os.path.join(outdir, 'flows_subcat_%s.png' % year)
+        pylab.savefig(fn)
+        return pos
+
+    def plot_all_subcat_flows(self, baseyear=1994):
+        # do 1994 first and then use pos for others ...
+        msubcat, mnclass = self.a.get_flows_by_year(baseyear)
+        pos = self.plot_subcat_flows(baseyear)
+        for year in range(1975, 1992, 3):
+            print 'Graphing flows for:', year
+            self.plot_subcat_flows(year, pos)
+
+    # TODO:
+    # 1. animate where we fix position and then iterate over years using the same
+    # data
+    # 2. impose threshold on drawing edges.
+    # 3. Aggregate to higher levels
+    # 4. Use flow data to do a PCA analysis
+    def draw_weighted_adjacency_matrix(self, inmatrix, labels=None, pos=None, ):
+        adjmat = S.sign(inmatrix)
+        dgr = nx.from_numpy_matrix(adjmat, create_using=nx.DiGraph())
+        if pos is None:
+            pos = nx.graphviz_layout(dgr)
+
+        edgewidth = [] 
+        for (u,v) in dgr.edges():
+            flow = inmatrix[u][v]
+            flow = flow/1000.0
+            edgewidth.append(flow)
+        selfflows = []
+        for nn in dgr.nodes():
+            flowtoself = inmatrix[nn][nn] / 100.0
+            selfflows.append(flowtoself)
+        # assume nodes are enumerated in right order
+        totalflows = inmatrix.sum(axis=1) / 100.0
+
+        
+        nx.draw_networkx_edges(dgr, pos,
+                width=edgewidth,
+                edge_color='b',
+                alpha=0.2,
+                node_size=0
+                )
+        nx.draw_networkx_nodes(dgr, pos,
+                node_size = totalflows,
+                node_color='k',
+                alpha=1.0)
+        nx.draw_networkx_nodes(dgr, pos,
+                node_size = selfflows,
+                node_color='y',
+                alpha=1.0)
+        nx.draw_networkx_labels(dgr, pos, labels=labels, font_size=12, font_color='r')
+        return (dgr, pos)
+
 
 def main():
     plot_ddist(1975)
@@ -293,8 +378,9 @@ def main():
 
 if __name__ == '__main__':
     # main()
-    a = Analyzer()
-    a.all_flows()
-    # plot_flows(1985)
+    pl = Plotter()
+    # a.all_flows()
+    # pl.plot_subcat_flows(1985)
+    pl.plot_all_subcat_flows()
 
 
