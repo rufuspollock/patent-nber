@@ -58,8 +58,6 @@ citation = Table('citation', metadata,
     Column('cited_id', Integer, primary_key=True),
 )
 
-i = Index('citation_cited_idx', citation.c.cited_id)
-
 # existence of duplicates means we need table without primary key stuff
 citation_tmp = Table('citation_tmp', metadata,
     Column('citing_id', Integer),
@@ -74,7 +72,6 @@ class Patent(object):
             info += '%s=%s ' % (c.key, getattr(self, c.key)) 
         info += '>'
         return info
-
  
 class Citation(object):
     pass
@@ -116,6 +113,7 @@ class PatentLoader(object):
         metadata.drop_all(bind=self.engine)
 
     def load_patents(self, filepath):
+        print '***** LOADING PATENTS *****'
         # you should first have cleaned the file by doing this
         cmdReplaceQuote = """sed -e 's/\\"//g'"""
 
@@ -133,6 +131,7 @@ class PatentLoader(object):
 
 
     def load_citations(self, filepath):
+        print '***** LOADING CITATIONS *****'
         pgcmdbase = 'psql -c "%s" -d patent'
         pgcmd = pgcmdbase % "\copy citation_tmp from STDIN WITH DELIMITER AS ',' NULL AS ''"
         cmddeleteline = 'sed -e "%sd"'
@@ -140,14 +139,8 @@ class PatentLoader(object):
         loadcmd = catcmd + ' | ' + self.cmd_delete_first_line + ' | ' + pgcmd
         copycmd = pgcmdbase % 'insert into citation select distinct * from citation_tmp;'
 
-        cmds = [
-            # pgcmdbase % 'create table citation_tmp( citing_id integer, cited_id integer );',
-            # loadcmd,
-            # copycmd,
-            # pgcmdbase % 'drop table citation_tmp;',
-            ]
+        print loadcmd
         os.system(loadcmd)
-        self.find_missing_patents()
         self.delete_citations_with_no_patent()
         print copycmd
         os.system(copycmd)
@@ -173,33 +166,42 @@ class PatentLoader(object):
         
         select distinct citing from citation_tmp where citing > 4326083 and not exists (select 1 from patent where patent.id = citing);
         '''
-        # use this info to speed things up
-        firstone = 4326083
-        q = select([citation_tmp.c.citing_id])
-        q = q.where(citation_tmp.c.citing_id > firstone -1)
-        rawexists = 'select 1 from patent where patent.id = citing_id'
-        q = q.where(not_(
-            func.exists(rawexists)
-            ))
-        q = q.distinct()
-        # have to do it by hand as exists clause does not substitute correctly
-        # have quotes around select ...
-        # out = q.execute().fetchall()
-        rawq = str(q)
-        rawq = rawq % { 'citing_1' : firstone -1, 'exists_1' : rawexists }
-        # print rawq
-        conn = engine.connect()
-        out = conn.execute(rawq).fetchall()
-        out = [ x[0] for x in out ]
-        # list of ids
-        fo = file(missing_fn, 'w')
-        for id in out:
-            fo.write(id)
-            fo.write('\n')
+        print 'Finding missing patents ...'
+        if not os.path.exists(missing_fn):
+            # use this info to speed things up
+            firstone = 4326083
+            q = select([citation_tmp.c.citing_id])
+            q = q.where(citation_tmp.c.citing_id > firstone -1)
+            rawexists = 'select 1 from patent where patent.id = citing_id'
+            q = q.where(not_(
+                func.exists(rawexists)
+                ))
+            q = q.distinct()
+            # have to do it by hand as exists clause does not substitute correctly
+            # have quotes around select ...
+            # out = q.execute().fetchall()
+            rawq = str(q)
+            print rawq
+            rawq = rawq % { 'citing_id_1' : firstone -1, 'exists_1' : rawexists }
+            # print rawq
+            conn = engine.connect()
+            out = conn.execute(rawq).fetchall()
+            out = [ x[0] for x in out ]
+            # list of ids
+            fo = file(missing_fn, 'w')
+            for id in out:
+                fo.write(id)
+                fo.write('\n')
+        else:
+            print 'Loading straight from %s as already exists' % missing_fn
+            fo = open(missing_fn)
+            out = []
+            out = [ int(line.strip()) for line in fo ]
         return out
 
     def delete_citations_with_no_patent(self):
-        idsdata = open(missing_fn).read()
+        print '**** Deleing citations for which patent does not exist'
+        idsdata = self.find_missing_patents()
         ids = [ int(line) for line in idsdata ]
         for id in ids:
             q = citation_tmp.delete()
@@ -276,8 +278,19 @@ def main():
     loader.initdb()
     loader.load_patents(data.patfile)
     loader.load_citations(data.citefile)
+    print '**** Creating index'
+    # do this last for speed
+    i = Index('citation_cited_idx', citation.c.cited_id)
+    print
+    print 'Checking load'
+    print 'Patents loaded', patent.count().execute().fetchall()[0][0]
+    print 'Citations loaded', citation.count().execute().fetchall()[0][0]
 
 
 if __name__ == '__main__':
-    loader = PatentLoader(engine)
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == 'build':
+        main()
+    else:
+        print 'To build the nber database do: python %s build' % __file__
 
