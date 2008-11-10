@@ -102,6 +102,12 @@ class TestAnalyzer:
         out = self.a.nclass_labels()
         assert out[2] == 'Apparel', out[2]
 
+    def test_extract_subject_vectors(self):
+        out = self.a.extract_subject_vectors(subcat=14, limit=10)
+        assert len(out) == 3
+        assert out[0][0] == 3864327
+        assert out[1][4] == 2, out[1]
+
 import scipy
 class TestPlotter:
     pl = Plotter()

@@ -183,6 +183,71 @@ class Analyzer(object):
                     create_using=nx.DiGraph())
         return dgr
 
+    def get_subject_vectors(self, subcat):
+        fn = os.path.join(D.citesdatadir, 'subcat_%s_subject_vectors.dat' % subcat)
+        if not os.path.exists(fn):
+            mat = self.extract_subject_vectors(subcat)
+            scipy.io.write_array(fn, mat)
+        else:
+            mat = scipy.io.read_array(fn)
+        return mat
+
+    def extract_subject_vectors(self, subcat, limit=None):
+        q = self.full_join()
+        citing = db.patent
+        cited = db.patent.alias('cited')
+        q = q.where(db.patent.c.subcat==subcat)
+        q = q.where(db.patent.c.gyear>=1975)
+        if limit:
+            q = q.limit(limit)
+        out = self.subject_vectors(q)
+        tlist = [ v for v in out.values() ]
+        return S.array(tlist)
+
+    def subject_vectors(self, query):
+        # TODO: refactor as used both here and below
+        class CategoryProcessor(object):
+            def __init__(self, catname, cat_summary):
+                self.catname = catname
+                self.src_cat_col = getattr(db.patent.c, self.catname)
+                cited = db.patent.alias('cited')
+                self.cited_cat_col = getattr(cited.c, self.catname)
+
+                self.size = len(cat_summary)
+                self.catlist = [ x[0] for x in cat_summary]
+                self.size = len(self.catlist)
+
+            def process(self, row):
+                i = self.cat2idx(row[self.src_cat_col])
+                j = self.cat2idx(row[self.cited_cat_col])
+                return i,j
+
+            def cat2idx(self, cat):
+                # index into matrix
+                if cat is None:
+                    return self.size
+                else:
+                    return self.catlist.index(cat)
+        proc_subcat = CategoryProcessor('subcat', self.subcats)
+        result = {}
+        count = -1
+        cited = db.patent.alias('cited')
+        for row in query.execute():
+            count += 1
+            # if count % max(1,(total/100)) == 0: # every 1%
+            if count % 10000 == 0:
+                print count
+            citingid = row[db.patent.c.id]
+            citedid = row[db.citation.c.cited_id]
+            citing_cat, cited_cat = proc_subcat.process(row)
+            if not citingid in result:
+                # add 1 for patent id
+                # add 1 for case where patents unknown
+                result[citingid] = S.zeros( proc_subcat.size+2, dtype=int )
+                result[citingid][0] = citingid
+            result[citingid][cited_cat + 1] += 1
+        return result
+
     def all_flows(self):
         self.flows = {}
         for year in range(1975, 1995):
@@ -438,6 +503,39 @@ class Plotter(object):
         fn = os.path.join(outdir, filename)
         pylab.savefig(fn)
 
+    def pca_of_subject_vectors(self):
+        inmats = [
+                self.a.get_subject_vectors(subcat=12),
+                self.a.get_subject_vectors(subcat=13),
+                self.a.get_subject_vectors(subcat=67),
+                ]
+        # trim off patent names and the 'None' category
+        def cleanup(inmatrix):
+            trimmed = inmatrix[:,1:-1]
+            # normalize by dividing row by row totals so rows sum to 1
+            for ii, row in enumerate(trimmed):
+                rowtotal = row.sum()
+                if rowtotal > 0:
+                    trimmed[ii] = row / rowtotal
+            return trimmed
+        inmats = map(cleanup, inmats)
+
+        for m in inmats:
+            pcanode = mdp.nodes.PCANode(output_dim=2)
+            pcanode.train(m)
+
+        pcanode.stop_training()
+        outmats = [ pcanode.execute(m) for m in inmats ]
+
+        pylab.clf()
+        for m,c in zip(outmats, ['b', 'r', 'g', 'm'][:len(outmats)]):
+            pylab.scatter(m[:,0], m[:,1], s=5, c=c)
+        # filename = 'subject_vectors_subcat_%s.png' % subcat
+        # filename = 'subject_vectors_subcat_12_13.png'
+        filename = 'subject_vectors_subcat_12_13_67.png'
+        fn = os.path.join(outdir, filename)
+        pylab.savefig(fn)
+        
 
 class GraphInfo:
     def __init__(self):
@@ -511,10 +609,14 @@ def main():
 
 if __name__ == '__main__':
     # main()
-    # pl = Plotter()
+    pl = Plotter()
     # pl.plot_subcat_flows(1985)
     # pl.plot_all_subcat_flows()
     # pl.plot_ddist()
     # pl.pca_of_flows()
-    g = GraphInfo()
+    # g = GraphInfo()
+    # a = Analyzer()
+    # a.get_subject_vectors(13)
+    pl.pca_of_subject_vectors()
+
 
