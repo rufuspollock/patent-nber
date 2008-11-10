@@ -1,7 +1,7 @@
 import os
 datadir = os.path.abspath('data')
-
 flowdatadir = os.path.join(datadir, 'flows')
+citesdatadir = os.path.join(datadir, 'cites')
 
 outdir = os.path.abspath('out')
 
@@ -16,6 +16,7 @@ def ensure_dirs():
     ensure_dir(datadir)
     ensure_dir(outdir)
     ensure_dir(flowdatadir)
+    ensure_dir(citesdatadir)
 
 ensure_dirs()
 

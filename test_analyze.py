@@ -98,6 +98,10 @@ class TestAnalyzer:
         # out = q.execute().fetchall()[0]
         assert out == 0, out
 
+    def test_nclass_labels(self):
+        out = self.a.nclass_labels()
+        assert out[2] == 'Apparel', out[2]
+
 import scipy
 class TestPlotter:
     pl = Plotter()

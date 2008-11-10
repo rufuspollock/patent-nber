@@ -36,6 +36,7 @@ Ideas:
 
 '''
 import os
+import re
 import simplejson as sj
 import sqlalchemy.sql as sql
 import scipy as S
@@ -75,7 +76,7 @@ class Analyzer(object):
         c1 = db.citation
         full = full.outerjoin(p2, p2.c.id==db.citation.c.cited_id)
         sel = sql.select(
-                [p1.c.id, p2.c.id, p1.c.cmade,
+                [p1.c.id, p2.c.id, c1.c.cited_id, p1.c.cmade,
                     p1.c.nclass, p2.c.nclass,
                     p1.c.subcat, p2.c.subcat,
                     ],
@@ -83,13 +84,21 @@ class Analyzer(object):
         sel = sel.apply_labels()
         return sel
 
-    def _get_subcat_labels(self):
+    def subcat_labels(self):
         fn = os.path.join(datadir, 'subcategories.csv')
         import csv
         r = csv.reader(file(fn))
         r.next() # skip heading
         labels = [ [int(row[1]), row[2] ] for row in r ]
         return dict(labels)
+
+    def nclass_labels(self):
+        fn = os.path.join(datadir, 'list_of_classes.txt')
+        labels = {}
+        for line in open(fn):
+            if re.match('^\d', line):
+                labels[int(line[:3])] = line[4:].strip()
+        return labels
 
     def _get_subcat_stats(self):
         # hand-crafted sql is probably faster
@@ -114,7 +123,7 @@ class Analyzer(object):
             res = []
             for year in range(1975, 1995):
                 res.append([year, self.cite_counts(year)])
-            sj.dump(res, file(cached, 'w'))
+            sj.dump(res, file(cached, 'w'), indent=4)
         else:
             res = sj.load(file(cached))
         return res
@@ -135,24 +144,44 @@ class Analyzer(object):
         results['creceive'] = ddist(t.creceive)
         return results
 
-    def get_citation_matrix(self, patent_query):
-        # patent_set = sql.select(d
-        # sql.
+    def extract_citation_graph(self, subcat):
+        '''Extract the citation graph.
+
+        Implement the following but fast:
+
         patent_set = patent_query.execute()
         for patent in patent_set:
             for cite in patent.citations:
                 results.append([patent.id, cite.cited_id, patent.gyear])
-            # in fact since both patent and pother must be in patent_set
-            # can ignore this since we will already have it
-            # (question is do we care about directionality ...
-            # for pother in patent.cited_by:
-            #    if pother in patent_set:
-            #        results.append([patent, pother, pother.gyear])
+        '''
+        q = self.full_join()
+        citing = db.patent
+        cited = db.patent.alias('cited')
+        q = q.where(db.patent.c.subcat==subcat)
+        q = q.where(db.patent.c.gyear>=1975)
+        # if we want to restrict to citations which go back into the set do
+        # does not work
+        # q = q.where(cited.c.id != None)
+        print q
+        dgr = nx.DiGraph()
+        count = -1
+        for row in q.execute():
+            count += 1
+            if count % 100 == 0: print count
+            citingid = row[citing.c.id]
+            citedid = row[db.citation.c.cited_id]
+            dgr.add_edge(citingid, citedid)
+        return dgr
 
-    def get_citation_matrix_fast(self, subcat, years=None):
-        # select citing_id, cited_id gyear
-        # q = sql.select(
-        pass
+    def get_citation_graph(self, subcat):
+        fn = os.path.join(D.citesdatadir, 'subcat_%s.dat' % subcat)
+        if not os.path.exists(fn):
+            dgr = self.extract_citation_graph(subcat)
+            nx.write_edgelist(dgr, open(fn, 'w'), delimiter=',')
+        else:
+            dgr = nx.read_edgelist(open(fn), delimiter=',',
+                    create_using=nx.DiGraph())
+        return dgr
 
     def all_flows(self):
         self.flows = {}
@@ -255,6 +284,7 @@ class Analyzer(object):
 
 import pylab
 import networkx as nx
+import mdp
 class Plotter(object):
 
     def __init__(self):
@@ -272,10 +302,21 @@ class Plotter(object):
         doplot(self.a.subcats, 'subcat_stats')
         doplot(self.a.nclasss, 'nclass_stats')
 
-    def plot_ddist(self, year):
+    def plot_ddist(self, year=None):
         c = self.a.all_cite_counts()
         c = dict(c)
-        counts = c[year]['creceive']
+        if year:
+            counts = c[year]['creceive']
+        else:
+            counts = {}
+            for tyear in c:
+                yearcounts = c[tyear]['creceive']
+                for cited_amount, num in yearcounts:
+                    counts[cited_amount] = counts.get(cited_amount, 0) + num
+            counts = [ [k,v] for k,v in counts.items() ]
+            counts.sort()
+            # for file names etc
+            year = '1975-1994'
         counts = zip(*counts)
         pylab.title('Distbn of Citations Received (%s)' % year)
         pylab.xlabel('No. Citations Received')
@@ -305,7 +346,7 @@ class Plotter(object):
         trimmed = trimmed[:-1,:-1]
         # transpose to get flows right way round (from x into y)
         trimmed = trimmed.T
-        tlabels = self.a._get_subcat_labels()
+        tlabels = self.a.subcat_labels()
         labels = {}
         for ii, item in enumerate(self.a.subcats):
             labels[ii] = tlabels[item[0]]
@@ -351,8 +392,6 @@ class Plotter(object):
             selfflows.append(flowtoself)
         # assume nodes are enumerated in right order
         totalflows = inmatrix.sum(axis=1) / 100.0
-
-        
         nx.draw_networkx_edges(dgr, pos,
                 width=edgewidth,
                 edge_color='b',
@@ -370,17 +409,112 @@ class Plotter(object):
         nx.draw_networkx_labels(dgr, pos, labels=labels, font_size=12, font_color='r')
         return (dgr, pos)
 
+    def pca_of_flows(self, year=1994):
+        msubcat, mnclass = self.a.get_flows_by_year(year)
+        slabels = self.a.subcat_labels().keys()
+        nlabels = self.a.nclass_labels().keys()
+        for (m,l,n) in zip([msubcat, mnclass], [slabels, nlabels], ['subcat', 'nclass']):
+            l.sort()
+            self.plot_pca(m, 'flows_pca_%s_%s.png' % (n,year), l)
+
+    def plot_pca(self, inmatrix, filename, labels=None):
+        trimmed = inmatrix[:-1,:-1]
+        # normalize by dividing row by row totals so rows sum to 1
+        for ii, row in enumerate(trimmed):
+            rowtotal = row.sum()
+            if rowtotal > 0:
+                trimmed[ii] = row / rowtotal
+
+        pcanode = mdp.nodes.PCANode(output_dim=2, svd=True)
+        pcanode.train(trimmed)
+        pcanode.stop_training()
+        outpca = pcanode.execute(trimmed)
+
+        pylab.clf()
+        pylab.scatter(outpca[:,0], outpca[:,1])
+        if labels:
+            for n, xy in zip(labels, outpca):
+                pylab.annotate(n, xy, fontsize='x-small')
+        fn = os.path.join(outdir, filename)
+        pylab.savefig(fn)
+
+
+class GraphInfo:
+    def __init__(self):
+        a = Analyzer()
+        subcat = 13
+        dgr = a.get_citation_graph(subcat)
+        gr = dgr.to_undirected()
+        # first component is largest
+        conn_components = nx.connected_components(gr)
+        print len(dgr)
+        print len(conn_components)
+        print [ len(x) for x in conn_components ]
+        # first item is largest
+        rgr = gr.subgraph(conn_components[0])
+        print nx.density(rgr)
+
+    def to_matrix(self, graph):
+        '''Convert graph to a numpy matrix.
+        
+        Lots of efficiency issues. Many of our graphs have very large order
+        (~10ks ...) and these cannot be converted to numpy matrices by networkx
+        (and even if they could, they would be unmanageable).
+        '''
+        mat = nx.convert.to_numpy_matrix(rgr)
+        return mat
+    
+    def to_matrix_sparse(self, graph):
+        '''Convert to sparse matrix.
+
+        Unfortunately this has no io support ...
+        '''
+        mat = nx.convert.to_scipy_sparse_matrix(graph)
+        # tried this but unsuccessful
+        # import scipy.io.mmio
+        # fn = os.path.join(D.citesdatadir, 'subcat_%s_processed.dat' % subcat)
+        # scipy.io.mmio.mmwrite(fn, mat)
+        # scipy.io.write_array(fn, mat)
+        return mat
+    
+    def to_matrix_random_cols(self, graph):
+        '''Select a random set of columns from the graph.
+
+        1. Convert to sparse
+        2. Then select columns
+        3. Then convert to normal matrix (now possible since reduced size)
+        4. Write to disk
+
+        Unfortunately 2 fails since sparse matrices do not seem to support
+        column selection in standard numpy way ...
+        '''
+        # colselection = S.random.random(len(rgr))
+        # take 2.5%
+        # colselection = colselection < 0.025
+        # take every 100th element
+        colselection = S.zeros(len(rgr))
+        ratio = 100
+        for ii in range(len(rgr)/ratio):
+            colselection[ii*ratio] = 1
+        colselection = colselection > 0
+        # mat = nx.convert.to_numpy_matrix(rgr)
+        mat = nx.convert.to_scipy_sparse_matrix(rgr)
+        # this does not work
+        # mat = mat[:,colselection] 
+
 
 def main():
     plot_ddist(1975)
     plot_ddist(1985)
     plot_ddist(1994)
 
+
 if __name__ == '__main__':
     # main()
-    pl = Plotter()
-    # a.all_flows()
+    # pl = Plotter()
     # pl.plot_subcat_flows(1985)
-    pl.plot_all_subcat_flows()
-
+    # pl.plot_all_subcat_flows()
+    # pl.plot_ddist()
+    # pl.pca_of_flows()
+    g = GraphInfo()
 
