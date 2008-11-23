@@ -403,77 +403,6 @@ class Plotter(object):
         fn = os.path.join(outdir, 'flows_subcat_%s_%s.png' % (year, subcatid))
         pylab.savefig(fn)
 
-    def plot_subcat_flows(self, year, pos=None):
-        msubcat, mnclass = self.a.get_flows_by_year(year)
-        # remove the unknown category
-        trimmed = msubcat[:-1,:-1]
-        # also remove the miscellaneous
-        trimmed = trimmed[:-1,:-1]
-        # transpose to get flows right way round (from x into y)
-        trimmed = trimmed.T
-        tlabels = self.a.subcat_labels()
-        labels = {}
-        for ii, item in enumerate(self.a.subcats):
-            labels[ii] = tlabels[item[0]]
-        del labels[len(labels) - 1]
-
-        pylab.clf()
-        pylab.figure(figsize=(15,15))
-        dgr, pos = self.draw_weighted_adjacency_matrix(trimmed, labels=labels, pos=pos)
-        pylab.xticks([])
-        pylab.yticks([])
-        fn = os.path.join(outdir, 'flows_subcat_%s.png' % year)
-        pylab.savefig(fn)
-        return pos
-
-    def plot_all_subcat_flows(self, baseyear=1994):
-        # do 1994 first and then use pos for others ...
-        msubcat, mnclass = self.a.get_flows_by_year(baseyear)
-        pos = self.plot_subcat_flows(baseyear)
-        for year in range(1975, 1992, 3):
-            print 'Graphing flows for:', year
-            self.plot_subcat_flows(year, pos)
-
-    # TODO:
-    # 1. animate where we fix position and then iterate over years using the same
-    # data
-    # 2. impose threshold on drawing edges.
-    # 3. Aggregate to higher levels
-    # 4. Use flow data to do a PCA analysis
-    def draw_weighted_adjacency_matrix(self, inmatrix, labels=None, pos=None, ):
-        adjmat = S.sign(inmatrix)
-        dgr = nx.from_numpy_matrix(adjmat, create_using=nx.DiGraph())
-        if pos is None:
-            pos = nx.graphviz_layout(dgr)
-
-        edgewidth = [] 
-        for (u,v) in dgr.edges():
-            flow = inmatrix[u][v]
-            flow = flow/1000.0
-            edgewidth.append(flow)
-        selfflows = []
-        for nn in dgr.nodes():
-            flowtoself = inmatrix[nn][nn] / 100.0
-            selfflows.append(flowtoself)
-        # assume nodes are enumerated in right order
-        totalflows = inmatrix.sum(axis=1) / 100.0
-        nx.draw_networkx_edges(dgr, pos,
-                width=edgewidth,
-                edge_color='b',
-                alpha=0.2,
-                node_size=0
-                )
-        nx.draw_networkx_nodes(dgr, pos,
-                node_size = totalflows,
-                node_color='k',
-                alpha=1.0)
-        nx.draw_networkx_nodes(dgr, pos,
-                node_size = selfflows,
-                node_color='y',
-                alpha=1.0)
-        nx.draw_networkx_labels(dgr, pos, labels=labels, font_size=12, font_color='r')
-        return (dgr, pos)
-
     def pca_of_flows(self, year=1994):
         msubcat, mnclass = self.a.get_flows_by_year(year)
         slabels = self.a.subcat_labels().keys()
@@ -536,6 +465,126 @@ class Plotter(object):
         fn = os.path.join(outdir, filename)
         pylab.savefig(fn)
         
+class FlowPlotter(object):
+
+    def __init__(self):
+        self.a = Analyzer()
+        self.figsize = 4
+        if self.figsize == 16:
+            self.font_size = 16
+        elif self.figsize == 4:
+            self.font_size = 6
+        else:
+            self.font_size = 19 - 3 * 16.0/self.figsize
+        self.flow_scaler = 1000.0 * 0.75 * 16.0/self.figsize
+        self.total_scaler = 100.0 * 16.0/self.figsize
+        self.do_threshold = False
+
+    def plot_subcat_flows(self, year, pos=None):
+        msubcat, mnclass = self.a.get_flows_by_year(year)
+        # remove the unknown category
+        trimmed = msubcat[:-1,:-1]
+        # also remove the miscellaneous
+        trimmed = trimmed[:-1,:-1]
+        # transpose to get flows right way round (from x into y)
+        trimmed = trimmed.T
+        tlabels = self.a.subcat_labels()
+        labels = {}
+        for ii, item in enumerate(self.a.subcats):
+            labels[ii] = tlabels[item[0]]
+        del labels[len(labels) - 1]
+
+        pylab.clf()
+        pylab.figure(figsize=(self.figsize, self.figsize))
+        # remove figure boundaries/axes
+        pylab.axis('off')
+        dgr, pos = self.draw_weighted_adjacency_matrix(trimmed, labels=labels, pos=pos)
+        pylab.xticks([])
+        pylab.yticks([])
+        fn = os.path.join(outdir, 'flows_subcat_%s' % year)
+        if not self.do_threshold: fn += '_full'
+        fn += '_%s' % self.figsize
+        fn += '.png'
+        pylab.savefig(fn)
+        return pos
+
+    def plot_all_subcat_flows(self, baseyear=1994):
+        # do 1994 first and then use pos for others ...
+        msubcat, mnclass = self.a.get_flows_by_year(baseyear)
+        pos = self.plot_subcat_flows(baseyear)
+        for year in range(1975, 1992, 3):
+            print 'Graphing flows for:', year
+            self.plot_subcat_flows(year, pos)
+            # self.plot_subcat_flows(year)
+
+    def threshold(self, inmatrix, percentage_threshold):
+        totalflows = inmatrix.sum(axis=1)
+        # remove self
+        multmat = inmatrix >= 0
+        for i in range(len(inmatrix)):
+            totalflows[i] += - inmatrix[i][i]
+            threshold = percentage_threshold/100.0 * totalflows[i]
+            multmat[i] = inmatrix[i] > threshold
+        # element by element multiplication 
+        inmatrix = inmatrix * multmat
+        return inmatrix
+
+    def threshold_crude(self, inmatrix, threshold):
+        multmat = inmatrix > threshold
+        # element by element multiplication 
+        inmatrix = inmatrix * multmat
+        return inmatrix
+
+    # TODO:
+    # 1. animate where we fix position and then iterate over years using the same
+    # data
+    # 2. impose threshold on drawing edges.
+    # 3. Aggregate to higher levels
+    # 4. Use flow data to do a PCA analysis
+    def draw_weighted_adjacency_matrix(self, inmatrix, labels=None, pos=None):
+        # remove connections with low values ...
+        if self.do_threshold:
+            inmatrix = self.threshold(inmatrix, 5)
+        adjmat = S.sign(inmatrix)
+        dgr = nx.from_numpy_matrix(adjmat, create_using=nx.DiGraph())
+        if pos is None:
+            pos = nx.graphviz_layout(dgr)
+
+        edgewidth = [] 
+        for (u,v) in dgr.edges():
+            flow = inmatrix[u][v]
+            # normalize flow by dividing by some number
+            flow = flow/self.flow_scaler
+            # now done above
+            # set flow = 0 when less than some value ...
+            # so flow originally less than 100
+            # if flow < 0.5: flow = 0
+            edgewidth.append(flow)
+        selfflows = []
+        # normalize size of nodes by dividing by arbitrary constants
+        for nn in dgr.nodes():
+            flowtoself = inmatrix[nn][nn] / self.total_scaler
+            selfflows.append(flowtoself)
+        # assume nodes are enumerated in right order
+        totalflows = inmatrix.sum(axis=1) / self.total_scaler
+        nx.draw_networkx_edges(dgr, pos,
+                width=edgewidth,
+                edge_color='b',
+                alpha=0.5,
+                node_size=0
+                )
+        nx.draw_networkx_nodes(dgr, pos,
+                node_size = totalflows,
+                node_color='k',
+                alpha=1.0)
+        nx.draw_networkx_nodes(dgr, pos,
+                node_size = selfflows,
+                node_color='y',
+                alpha=1.0)
+        nx.draw_networkx_labels(dgr, pos, labels=labels, font_size=self.font_size, font_color='r')
+        return (dgr, pos)
+
+
 
 class GraphInfo:
     def __init__(self):
@@ -609,14 +658,14 @@ def main():
 
 if __name__ == '__main__':
     # main()
-    pl = Plotter()
-    # pl.plot_subcat_flows(1985)
-    # pl.plot_all_subcat_flows()
+    fpl = FlowPlotter()
+    fpl.plot_subcat_flows(1994)
+    # fpl.plot_all_subcat_flows()
     # pl.plot_ddist()
     # pl.pca_of_flows()
     # g = GraphInfo()
     # a = Analyzer()
     # a.get_subject_vectors(13)
-    pl.pca_of_subject_vectors()
+    # pl.pca_of_subject_vectors()
 
 
