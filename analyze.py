@@ -1,4 +1,11 @@
-'''Things we want to do:
+'''Analyze NBER patent data.
+
+Requirements:
+    * scipy
+    * networkx
+    * mdp <http://mdp-toolkit.sourceforge.net/>
+
+Things we want to do:
 
     1. Get basic count data by category
     2. Do citation anlysis (forward and back) by time and category
@@ -32,7 +39,7 @@ Ideas:
     * knowledge flows: cite from x -> y is flow from y -> x. Equate x and y
       with their technological areas and ...
       * multi-graph with weighted links
-    * 
+
 
 '''
 import os
@@ -53,8 +60,8 @@ class Analyzer(object):
     nclass_list = os.path.join(datadir, 'nclass_summary.js')
 
     def __init__(self):
-        self.subcats = None
-        self.nclasss = None
+        self.subcatstats = None
+        self.nclassstats = None
         self.load_cached_data()
         # (wc data/subcategories.csv) - 1
         # self.num_subcats = 36
@@ -64,10 +71,10 @@ class Analyzer(object):
     def load_cached_data(self):
         if not os.path.exists(self.subcat_list):
             self._get_subcat_stats()
-        self.subcats = sj.load(file(self.subcat_list))
+        self.subcatstats = sj.load(file(self.subcat_list))
         if not os.path.exists(self.nclass_list):
             self._get_nclass_stats()
-        self.nclasss = sj.load(file(self.nclass_list))
+        self.nclassstats = sj.load(file(self.nclass_list))
 
     def full_join(self):
         full = db.patent.join(db.citation)
@@ -207,6 +214,7 @@ class Analyzer(object):
     def subject_vectors(self, query):
         # TODO: refactor as used both here and below
         class CategoryProcessor(object):
+            '''Convert subcategories to indices in a matrix.'''
             def __init__(self, catname, cat_summary):
                 self.catname = catname
                 self.src_cat_col = getattr(db.patent.c, self.catname)
@@ -228,7 +236,7 @@ class Analyzer(object):
                     return self.size
                 else:
                     return self.catlist.index(cat)
-        proc_subcat = CategoryProcessor('subcat', self.subcats)
+        proc_subcat = CategoryProcessor('subcat', self.subcatstats)
         result = {}
         count = -1
         cited = db.patent.alias('cited')
@@ -327,8 +335,8 @@ class Analyzer(object):
                 else:
                     return self.catlist.index(cat)
 
-        proc_subcat = CategoryProcessor('subcat', self.subcats)
-        proc_nclass = CategoryProcessor('nclass', self.nclasss)
+        proc_subcat = CategoryProcessor('subcat', self.subcatstats)
+        proc_nclass = CategoryProcessor('nclass', self.nclassstats)
         # very slow
         # countq = query.alias().count()
         # total = countq.execute().fetchall()[0][0]
@@ -364,8 +372,8 @@ class Plotter(object):
             fn = os.path.join(outdir, '%s.png' % fname)
             pylab.savefig(fn)
             pylab.clf()
-        doplot(self.a.subcats, 'subcat_stats')
-        doplot(self.a.nclasss, 'nclass_stats')
+        doplot(self.a.subcatstats, 'subcat_stats')
+        doplot(self.nclassstats, 'nclass_stats')
 
     def plot_ddist(self, year=None):
         c = self.a.all_cite_counts()
@@ -393,7 +401,7 @@ class Plotter(object):
 
     def plot_subcat_flow_bar(self, subcatid, year):
         msubcat, mnclass = self.a.get_flows_by_year(year)
-        subcats = [ x[0] for x in self.a.subcats ]
+        subcats = [ x[0] for x in self.a.subcatstats ]
         idx = subcats.index(subcatid)
         # for undefined area
         subcats.append(subcats[-1] + 1)
@@ -405,9 +413,12 @@ class Plotter(object):
 
     def pca_of_flows(self, year=1994):
         msubcat, mnclass = self.a.get_flows_by_year(year)
+        # use numbers rather than names because names take up too much space
         slabels = self.a.subcat_labels().keys()
         nlabels = self.a.nclass_labels().keys()
+        # TODO:? limit only do subcats (with classes too much!)
         for (m,l,n) in zip([msubcat, mnclass], [slabels, nlabels], ['subcat', 'nclass']):
+        # for (m,l,n) in [(msubcat, slables, 'subcat')]:
             l.sort()
             self.plot_pca(m, 'flows_pca_%s_%s.png' % (n,year), l)
 
@@ -426,9 +437,15 @@ class Plotter(object):
 
         pylab.clf()
         pylab.scatter(outpca[:,0], outpca[:,1])
+        colours = { '1': 'b', '2': 'r', '3': 'k', '4': 'y', '5': 'm', '6': 'c' }
         if labels:
             for n, xy in zip(labels, outpca):
                 pylab.annotate(n, xy, fontsize='x-small')
+                # colour the different groups
+                # n is subcat id and and main categories share a first letter
+                # only works for subcats
+                if 'subcat' in filename:
+                    pylab.scatter([xy[0]], [xy[1]], c=colours[str(n)[0]])
         fn = os.path.join(outdir, filename)
         pylab.savefig(fn)
 
@@ -490,7 +507,7 @@ class FlowPlotter(object):
         trimmed = trimmed.T
         tlabels = self.a.subcat_labels()
         labels = {}
-        for ii, item in enumerate(self.a.subcats):
+        for ii, item in enumerate(self.a.subcatstats):
             labels[ii] = tlabels[item[0]]
         del labels[len(labels) - 1]
 
@@ -587,6 +604,11 @@ class FlowPlotter(object):
 
 
 class GraphInfo:
+    '''Information and manipulation of (mathematical) graphs.
+    
+    Not standard stuff as that can be done by networkx.
+    '''
+
     def __init__(self):
         a = Analyzer()
         subcat = 13
@@ -649,23 +671,55 @@ class GraphInfo:
         # this does not work
         # mat = mat[:,colselection] 
 
+class Presenter:
+    def __init__(self):
+        self.a = Analyzer()
+
+    def latex_subcat(self):
+        # subcats = self.a.
+        import econ.data
+        fn = os.path.join(datadir, 'subcategories.csv')
+        reader = econ.data.CsvReader()
+        tabular = reader.read(open(fn))
+        tabular.header = ['Id', 'Name', 'Main Category', 'No. Patents']
+        data = tabular.data
+        data = zip(*data)
+        del data[3]
+        del data[0]
+        data.append([ x[1] for x in self.a.subcatstats ])
+        tabular.data = zip(*data)
+        writer = econ.data.LatexWriter()
+        out = writer.write(tabular)
+        print out
+
 
 def main():
-    plot_ddist(1975)
-    plot_ddist(1985)
-    plot_ddist(1994)
+    # ddists
+    pl = Plotter()
+    pl.plot_ddist(1975)
+    pl.plot_ddist(1985)
+    pl.plot_ddist(1994)
+    pl.plot_ddist()
+    # flow plotter
+    fpl = FlowPlotter()
+    fpl.plot_subcat_flows(1994)
+    # fpl.plot_all_subcat_flows()
+    # pl.pca_of_flows()
+
+    # subject vectors
+    # pl.pca_of_subject_vectors()
 
 
 if __name__ == '__main__':
     # main()
-    fpl = FlowPlotter()
-    fpl.plot_subcat_flows(1994)
-    # fpl.plot_all_subcat_flows()
-    # pl.plot_ddist()
-    # pl.pca_of_flows()
+    p = Presenter()
+    # p.latex_subcat()
+    
+    pl = Plotter()
+    pl.pca_of_flows()
+
     # g = GraphInfo()
     # a = Analyzer()
     # a.get_subject_vectors(13)
-    # pl.pca_of_subject_vectors()
 
 

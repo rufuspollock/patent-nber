@@ -1,4 +1,4 @@
-from analyze import Analyzer, db, Plotter
+from analyze import Analyzer, db, Plotter, FlowPlotter
 
 class TestAnalyzer:
     a = Analyzer()
@@ -40,13 +40,13 @@ class TestAnalyzer:
         assert out[citing.c.id] == 3357959
 
     def test_subcat_stats(self):
-        out = self.a.subcats
+        out = self.a.subcatstats
         print out
         assert len(out) == 36, len(out)
         assert out[0][0] == 11
 
     def test_nclass_stats(self):
-        out = self.a.nclasss
+        out = self.a.nclassstats
         print out
         assert len(out) == 418, len(out)
         assert out[0][0] == 1
@@ -111,6 +111,7 @@ class TestAnalyzer:
 import scipy
 class TestPlotter:
     pl = Plotter()
+    fpl = FlowPlotter()
 
     def test_draw_weighted_adjacency_matrix(self):
         inmat = scipy.array([
@@ -118,6 +119,6 @@ class TestPlotter:
             [0.0, 1.0, 0.0],
             [1.0, 0.7, 1.5]
             ])
-        dgr, pos = self.pl.draw_weighted_adjacency_matrix(inmat)
+        dgr, pos = self.fpl.draw_weighted_adjacency_matrix(inmat)
         assert len(dgr) == 3
 
