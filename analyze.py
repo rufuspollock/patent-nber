@@ -44,6 +44,8 @@ Ideas:
 '''
 import os
 import re
+import logging
+
 import simplejson as sj
 import sqlalchemy.sql as sql
 import scipy as S
@@ -54,6 +56,8 @@ import data as D
 
 datadir = D.datadir
 outdir = D.outdir
+
+logger = logging.getLogger('patterns.nber')
 
 class Analyzer(object):
     subcat_list = os.path.join(datadir, 'subcat_summary.js')
@@ -411,7 +415,7 @@ class Plotter(object):
         fn = os.path.join(outdir, 'flows_subcat_%s_%s.png' % (year, subcatid))
         pylab.savefig(fn)
 
-    def pca_of_flows(self, year=1994):
+    def pca_of_flows(self, year):
         msubcat, mnclass = self.a.get_flows_by_year(year)
         # use numbers rather than names because names take up too much space
         slabels = self.a.subcat_labels().keys()
@@ -482,23 +486,59 @@ class Plotter(object):
         fn = os.path.join(outdir, filename)
         pylab.savefig(fn)
         
+
 class FlowPlotter(object):
 
-    def __init__(self):
+    def __init__(self, figsize=16, threshold=5, cumulative=False, baseyear=1994):
+        '''
+        @param figsize: figsize to use for pylab.
+        @param threshold: filter out all flows below threshold. threshold=0
+        equates to no filtering.
+        @param cumulative: plot cumulative flows
+        @param baseyear: base year for layout of diagram (set to None to have
+        no baseyear).
+        '''
         self.a = Analyzer()
-        self.figsize = 4
+        self.figsize = figsize
+        self.threshold = threshold
+        self.cumulative = cumulative
+        self.baseyear = baseyear
         if self.figsize == 16:
-            self.font_size = 16
+            self.font_size = 18
+            self.flow_scaler = 1000.0 * 0.33
+            self.total_scaler = 100.0 * 0.75
         elif self.figsize == 4:
             self.font_size = 6
+            self.flow_scaler = 1000.0 * 0.33 * 4.0
+            self.total_scaler = 100.0 * 4.0
         else:
             self.font_size = 19 - 3 * 16.0/self.figsize
-        self.flow_scaler = 1000.0 * 0.75 * 16.0/self.figsize
-        self.total_scaler = 100.0 * 16.0/self.figsize
-        self.do_threshold = False
+            self.flow_scaler = 1000.0 * 0.33 * 16.0/self.figsize
+            self.total_scaler = 100.0 * 16.0/self.figsize
+        if self.cumulative: # divide by 7.0
+            self.flow_scaler = self.flow_scaler * 7.0
+            self.total_scaler = self.total_scaler * 7.0
+
+    def plot_all_subcat_flows(self):
+        print 'Plotting all subcat flows'
+        if self.baseyear:
+            print 'Computing position for baseyear %s' % self.baseyear
+            pos = self.plot_subcat_flows(self.baseyear)
+        else:
+            pos = None
+        for year in range(1975, 1995):
+            print 'Graphing flows for:', year
+            self.plot_subcat_flows(year, pos)
 
     def plot_subcat_flows(self, year, pos=None):
-        msubcat, mnclass = self.a.get_flows_by_year(year)
+        if self.cumulative:
+            msubcat, mnclass = self.a.get_flows_by_year(1975)
+            for y in range(1976, year):
+                t1, t2 = self.a.get_flows_by_year(y)
+                msubcat += t1
+                mnclass += t2
+        else:
+            msubcat, mnclass = self.a.get_flows_by_year(year)
         # remove the unknown category
         trimmed = msubcat[:-1,:-1]
         # also remove the miscellaneous
@@ -515,26 +555,21 @@ class FlowPlotter(object):
         pylab.figure(figsize=(self.figsize, self.figsize))
         # remove figure boundaries/axes
         pylab.axis('off')
-        dgr, pos = self.draw_weighted_adjacency_matrix(trimmed, labels=labels, pos=pos)
+        dgr, newpos = self.draw_weighted_adjacency_matrix(trimmed, labels=labels, pos=pos)
         pylab.xticks([])
         pylab.yticks([])
+        pylab.title(year)
         fn = os.path.join(outdir, 'flows_subcat_%s' % year)
-        if not self.do_threshold: fn += '_full'
-        fn += '_%s' % self.figsize
+        fn += '_thr%02d' % self.threshold
+        fn += '_base%s' % self.baseyear
+        if self.cumulative:
+            fn += '_cum'
+        fn += '_fs%s' % self.figsize
         fn += '.png'
         pylab.savefig(fn)
-        return pos
+        return newpos
 
-    def plot_all_subcat_flows(self, baseyear=1994):
-        # do 1994 first and then use pos for others ...
-        msubcat, mnclass = self.a.get_flows_by_year(baseyear)
-        pos = self.plot_subcat_flows(baseyear)
-        for year in range(1975, 1992, 3):
-            print 'Graphing flows for:', year
-            self.plot_subcat_flows(year, pos)
-            # self.plot_subcat_flows(year)
-
-    def threshold(self, inmatrix, percentage_threshold):
+    def apply_threshold(self, inmatrix, percentage_threshold):
         totalflows = inmatrix.sum(axis=1)
         # remove self
         multmat = inmatrix >= 0
@@ -560,8 +595,8 @@ class FlowPlotter(object):
     # 4. Use flow data to do a PCA analysis
     def draw_weighted_adjacency_matrix(self, inmatrix, labels=None, pos=None):
         # remove connections with low values ...
-        if self.do_threshold:
-            inmatrix = self.threshold(inmatrix, 5)
+        if self.threshold:
+            inmatrix = self.apply_threshold(inmatrix, self.threshold)
         adjmat = S.sign(inmatrix)
         dgr = nx.from_numpy_matrix(adjmat, create_using=nx.DiGraph())
         if pos is None:
@@ -671,6 +706,7 @@ class GraphInfo:
         # this does not work
         # mat = mat[:,colselection] 
 
+
 class Presenter:
     def __init__(self):
         self.a = Analyzer()
@@ -693,33 +729,72 @@ class Presenter:
         print out
 
 
-def main():
+def make_animation(baseyear=1994, figsize=16):
+    years = range(1975, 1995)
+    fnbase = 'out/flows_subcat_%%s_thr05_base%s_fs%s.png' % (baseyear, figsize)
+    outfp = 'out/flows_subcat_animated_%s-%s_base%s_fs%s.gif' % (years[0], years[-1], baseyear, figsize)
+    imgs = [ fnbase % x  for x in years ]
+    cmd = 'convert -delay 60 -loop 1 %s %s' % (' '.join(imgs), outfp)
+    print cmd
+    os.system(cmd)
+
+def all():
     # ddists
-    pl = Plotter()
-    pl.plot_ddist(1975)
-    pl.plot_ddist(1985)
-    pl.plot_ddist(1994)
-    pl.plot_ddist()
     # flow plotter
     fpl = FlowPlotter()
     fpl.plot_subcat_flows(1994)
     # fpl.plot_all_subcat_flows()
-    # pl.pca_of_flows()
 
     # subject vectors
     # pl.pca_of_subject_vectors()
 
-
+import optparse
 if __name__ == '__main__':
-    # main()
-    p = Presenter()
-    # p.latex_subcat()
+    usage = '''%prog
+
+    make_animation
+    latex_subcat
+    flows_pca
+    ddist
+    flows_plot
+    '''
+    parser = optparse.OptionParser(usage)
+    options, args = parser.parse_args()
+    if len(args) == 0:
+        parser.print_help()
+    action = args[0]
+    if action == 'make_animation':
+        make_animation()
+        make_animation(figsize=4)
+    elif action == 'latex_subcat':
+        p = Presenter()
+        p.latex_subcat()
+    elif action == 'all':
+        main()
+    elif action == 'flows_pca':
+        pl = Plotter()
+        pl.pca_of_flows(1994)
+    elif action == 'flows_plot':
+        # fpl = FlowPlotter(figsize=4, baseyear=1994)
+        # fpl.plot_subcat_flows(1994)
+        # fpl.plot_all_subcat_flows()
+        fpl = FlowPlotter(figsize=16, baseyear=None, cumulative=True)
+        fpl.plot_all_subcat_flows()
+        # fpl = FlowPlotter(figsize=16, baseyear=1994, cumulative=True)
+        # fpl.plot_all_subcat_flows()
+    elif action == 'ddist':
+        # if len(args) >= 2:
+        #    year = args[1]
+        pl = Plotter()
+        pl.plot_ddist(1975)
+        pl.plot_ddist(1985)
+        pl.plot_ddist(1994)
+        pl.plot_ddist()
+    else:
+        parser.print_help()
     
-    pl = Plotter()
-    pl.pca_of_flows()
 
     # g = GraphInfo()
     # a = Analyzer()
     # a.get_subject_vectors(13)
-
 
