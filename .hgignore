@@ -1,0 +1,5 @@
+syntax: glob
+data/*
+out/*
+old/*
+sandbox/*
